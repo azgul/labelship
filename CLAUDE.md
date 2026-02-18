@@ -1,20 +1,24 @@
 # Labelship - Shopify Shipping Label App
 
 ## Overview
-Shopify embedded app for buying and printing shipping labels. Pay-per-label pricing (2 DKK/label), no monthly fee. First 10 labels free.
+Shopify embedded app for buying and printing shipping labels via the Shipmondo API.
+Pay-per-label pricing (2 DKK/label), no monthly fee. First 10 labels free.
+
+Each user brings their own free Shipmondo account — we use the Shipmondo REST API v3
+to create shipments and fetch label PDFs. This avoids needing direct carrier agreements.
 
 ## Tech Stack
 - Framework: Shopify Remix (Remix + Polaris UI)
 - Database: PostgreSQL + Prisma ORM
 - Queue: BullMQ + Redis
+- Shipping: Shipmondo REST API v3 (Basic Auth)
 - Billing: Shopify usage-based billing API
 - Deployment: Fly.io (Amsterdam region)
 
 ## Project Structure
 - app/routes/ - Remix routes (dashboard, ship, shipments, settings, billing, webhooks)
-- app/lib/carriers/ - Carrier adapter interface + registry
-- app/lib/carriers/gls/ - GLS adapter (client, mapper, types)
-- app/lib/shipments/ - Shipment creation/cancellation service
+- app/lib/shipmondo/ - Shipmondo API client and types
+- app/lib/shipments/ - Shipment creation service
 - app/lib/billing/ - Shopify usage billing
 - workers/ - BullMQ worker for tracking updates
 - prisma/ - Database schema and migrations
@@ -29,13 +33,19 @@ Shopify embedded app for buying and printing shipping labels. Pay-per-label pric
 - npm run prisma:studio - Open Prisma Studio
 
 ## Architecture
-- Carrier-agnostic: CarrierAdapter interface in app/lib/carriers/types.ts
-- Adding a new carrier = new folder under carriers/, implement the interface, register in registry.ts
-- GLS is the first carrier, PostNord/DAO/Bring are stubbed in the registry
+- Shipmondo handles all carrier integrations (GLS, PostNord, DAO, Bring, etc.)
+- Users configure their Shipmondo API credentials in Settings
+- Labels are fetched as base64 PDF from Shipmondo and stored on the shipment record
+- We never use Shipmondo's Print Client — we serve the PDF directly for download/print
 - Web process handles OAuth, UI, label creation
-- Worker process polls carrier tracking APIs
-- Labels stored as binary in DB (shipment.labelData)
-- Carrier credentials stored on tenant record
+- Worker process can poll Shipmondo for tracking updates
+
+## Shipmondo API
+- Base URL: https://app.shipmondo.com/api/public/v3
+- Auth: HTTP Basic Auth (api_user:api_key)
+- Key endpoints: POST /shipments, GET /shipments/{id}/labels, GET /products, GET /pickup_points
+- Sandbox: https://sandbox.shipmondo.com/api/public/v3
 
 ## Environment Variables
 See .env.example for required configuration.
+Shipmondo credentials are stored per-tenant in the database (not in env vars).

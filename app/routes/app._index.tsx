@@ -10,7 +10,6 @@ import {
   Badge,
   Text,
   BlockStack,
-  InlineStack,
 } from "@shopify/polaris";
 
 import { authenticate } from "../shopify.server";
@@ -47,6 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       id: s.id,
       orderName: s.shopifyOrderName || "-",
       recipient: s.recipientName,
+      carrier: s.carrierCode || "-",
       trackingNumber: s.trackingNumber || "-",
       status: s.status,
       createdAt: s.createdAt,
@@ -101,11 +101,12 @@ export default function Dashboard() {
                 </EmptyState>
               ) : (
                 <DataTable
-                  columnContentTypes={["text", "text", "text", "text"]}
-                  headings={["Order", "Recipient", "Tracking", "Status"]}
+                  columnContentTypes={["text", "text", "text", "text", "text"]}
+                  headings={["Order", "Recipient", "Carrier", "Tracking", "Status"]}
                   rows={shipments.map((s) => [
                     s.orderName,
                     s.recipient,
+                    s.carrier,
                     s.trackingNumber,
                     <Badge tone={STATUS_BADGE[s.status] || "info"}>{s.status.replace("_", " ")}</Badge>,
                   ])}

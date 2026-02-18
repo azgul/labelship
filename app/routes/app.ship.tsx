@@ -18,7 +18,7 @@ import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { createShipment } from "~/lib/shipments/service";
-import { getCarrierAdapter } from "~/lib/carriers/registry";
+import { ShipmondoClient } from "~/lib/shipmondo/client";
 import { recordUsageCharge } from "~/lib/billing/usage";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -33,26 +33,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const hasSender = !!(tenant.senderName && tenant.senderStreet && tenant.senderZip && tenant.senderCity);
-  const hasCarrier = !!(tenant.glsCustomerId && tenant.glsApiUsername && tenant.glsApiPassword);
+  const hasApi = !!(tenant.shipmondoApiUser && tenant.shipmondoApiKey);
 
-  let products: Array<{ code: string; name: string; requiresParcelShop: boolean }> = [];
+  let products: Array<{ code: string; name: string; carrier: string }> = [];
 
-  if (hasCarrier) {
+  if (hasApi) {
     try {
-      const adapter = await getCarrierAdapter(tenant.defaultCarrier, {
-        customerId: tenant.glsCustomerId || undefined,
-        apiUsername: tenant.glsApiUsername || undefined,
-        apiPassword: tenant.glsApiPassword || undefined,
+      const client = new ShipmondoClient({
+        apiUser: tenant.shipmondoApiUser!,
+        apiKey: tenant.shipmondoApiKey!,
       });
-      products = adapter.getProducts();
+      const shipmondoProducts = await client.getProducts({ country_code: "DK" });
+      products = shipmondoProducts.map((p) => ({
+        code: p.code,
+        name: `${p.carrier_name} - ${p.name}`,
+        carrier: p.carrier_code,
+      }));
     } catch {
-      // Carrier not configured properly
+      // API credentials may be invalid
     }
   }
 
   return json({
     products,
-    configured: hasSender && hasCarrier,
+    configured: hasSender && hasApi,
   });
 };
 
@@ -66,27 +70,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     const shipment = await createShipment(tenant, {
-      shopifyOrderId: formData.get("shopifyOrderId") as string || undefined,
-      shopifyOrderName: formData.get("shopifyOrderName") as string || undefined,
-      recipient: {
-        name: formData.get("recipientName") as string,
-        street: formData.get("recipientStreet") as string,
-        zip: formData.get("recipientZip") as string,
-        city: formData.get("recipientCity") as string,
-        country: (formData.get("recipientCountry") as string) || "DK",
-        phone: formData.get("recipientPhone") as string || undefined,
-        email: formData.get("recipientEmail") as string || undefined,
-      },
-      parcels: [
-        {
-          weight: parseFloat(formData.get("weight") as string) || 1,
-        },
-      ],
-      product: formData.get("product") as string,
-      parcelShopId: formData.get("parcelShopId") as string || undefined,
+      shopifyOrderId: (formData.get("shopifyOrderId") as string) || undefined,
+      shopifyOrderName: (formData.get("shopifyOrderName") as string) || undefined,
+      recipientName: formData.get("recipientName") as string,
+      recipientStreet: formData.get("recipientStreet") as string,
+      recipientZip: formData.get("recipientZip") as string,
+      recipientCity: formData.get("recipientCity") as string,
+      recipientCountry: (formData.get("recipientCountry") as string) || "DK",
+      recipientPhone: (formData.get("recipientPhone") as string) || undefined,
+      recipientEmail: (formData.get("recipientEmail") as string) || undefined,
+      productCode: formData.get("productCode") as string,
+      servicePointId: (formData.get("servicePointId") as string) || undefined,
+      weight: parseInt(formData.get("weight") as string, 10) || 1000,
     });
 
-    // Bill for the label
     await recordUsageCharge(tenant, shipment.id, admin);
 
     return redirect(`/app/shipments`);
@@ -105,14 +102,14 @@ export default function Ship() {
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
-  const [product, setProduct] = useState(products[0]?.code || "PARCEL");
+  const [productCode, setProductCode] = useState(products[0]?.code || "");
 
   if (!configured) {
     return (
       <Page title="Create Label" backAction={{ url: "/app" }}>
         <Banner tone="warning">
           <p>
-            Please configure your sender address and GLS credentials in{" "}
+            Please configure your sender address and Shipmondo API credentials in{" "}
             <a href="/app/settings">Settings</a> before creating labels.
           </p>
         </Banner>
@@ -153,22 +150,28 @@ export default function Ship() {
 
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h2" variant="headingSm">Parcel</Text>
+                  <Text as="h2" variant="headingSm">Shipping</Text>
                   <FormLayout>
-                    <TextField label="Weight (kg)" name="weight" type="number" autoComplete="off" value="1" />
-                    <Select
-                      label="Shipping product"
-                      name="product"
-                      options={products.map((p) => ({ label: p.name, value: p.code }))}
-                      value={product}
-                      onChange={setProduct}
+                    <TextField
+                      label="Weight (grams)"
+                      name="weight"
+                      type="number"
+                      autoComplete="off"
+                      value="1000"
                     />
-                    {products.find((p) => p.code === product)?.requiresParcelShop && (
-                      <TextField label="Parcel Shop ID" name="parcelShopId" autoComplete="off" requiredIndicator />
-                    )}
+                    <Select
+                      label="Product"
+                      name="productCode"
+                      options={products.map((p) => ({ label: p.name, value: p.code }))}
+                      value={productCode}
+                      onChange={setProductCode}
+                    />
+                    <TextField label="Service Point ID (if pickup point delivery)" name="servicePointId" autoComplete="off" />
                   </FormLayout>
                 </BlockStack>
               </Card>
+
+              <input type="hidden" name="productCode" value={productCode} />
 
               <Button variant="primary" submit loading={isSubmitting}>
                 Create Label

@@ -1,37 +1,47 @@
 import prisma from "~/db.server";
 import type { Tenant, Shipment } from "@prisma/client";
-import { getCarrierAdapter } from "~/lib/carriers/registry";
-import type { Address, Parcel } from "~/lib/carriers/types";
+import { ShipmondoClient } from "~/lib/shipmondo/client";
+import type { ShipmondoParty } from "~/lib/shipmondo/types";
 
 interface CreateShipmentInput {
   shopifyOrderId?: string;
   shopifyOrderName?: string;
-  recipient: Address;
-  parcels: Parcel[];
-  product: string;
-  parcelShopId?: string;
+  recipientName: string;
+  recipientStreet: string;
+  recipientZip: string;
+  recipientCity: string;
+  recipientCountry?: string;
+  recipientPhone?: string;
+  recipientEmail?: string;
+  productCode: string;
+  serviceCodes?: string;
+  servicePointId?: string;
+  weight: number; // grams
 }
 
-function getTenantSenderAddress(tenant: Tenant): Address {
+function getShipmondoClient(tenant: Tenant): ShipmondoClient {
+  if (!tenant.shipmondoApiUser || !tenant.shipmondoApiKey) {
+    throw new Error("Shipmondo API credentials not configured. Go to Settings.");
+  }
+  return new ShipmondoClient({
+    apiUser: tenant.shipmondoApiUser,
+    apiKey: tenant.shipmondoApiKey,
+  });
+}
+
+function buildSenderParty(tenant: Tenant): ShipmondoParty {
   if (!tenant.senderName || !tenant.senderStreet || !tenant.senderZip || !tenant.senderCity) {
-    throw new Error("Sender address not configured. Go to Settings to set your sender address.");
+    throw new Error("Sender address not configured. Go to Settings.");
   }
   return {
+    type: "sender",
     name: tenant.senderName,
-    street: tenant.senderStreet,
-    zip: tenant.senderZip,
+    address1: tenant.senderStreet,
+    postal_code: tenant.senderZip,
     city: tenant.senderCity,
-    country: tenant.senderCountry,
+    country_code: tenant.senderCountry,
     phone: tenant.senderPhone || undefined,
     email: tenant.senderEmail || undefined,
-  };
-}
-
-function getTenantCarrierCredentials(tenant: Tenant) {
-  return {
-    customerId: tenant.glsCustomerId || undefined,
-    apiUsername: tenant.glsApiUsername || undefined,
-    apiPassword: tenant.glsApiPassword || undefined,
   };
 }
 
@@ -39,53 +49,66 @@ export async function createShipment(
   tenant: Tenant,
   input: CreateShipmentInput,
 ): Promise<Shipment> {
-  const sender = getTenantSenderAddress(tenant);
-  const credentials = getTenantCarrierCredentials(tenant);
-  const adapter = await getCarrierAdapter(tenant.defaultCarrier, credentials);
+  const client = getShipmondoClient(tenant);
+  const sender = buildSenderParty(tenant);
 
-  // Create the shipment record first (PENDING)
+  // Create local record first (PENDING)
   const shipment = await prisma.shipment.create({
     data: {
       tenantId: tenant.id,
-      carrier: tenant.defaultCarrier,
+      productCode: input.productCode,
       shopifyOrderId: input.shopifyOrderId,
       shopifyOrderName: input.shopifyOrderName,
-      recipientName: input.recipient.name,
-      recipientStreet: input.recipient.street,
-      recipientZip: input.recipient.zip,
-      recipientCity: input.recipient.city,
-      recipientCountry: input.recipient.country,
-      recipientPhone: input.recipient.phone,
-      recipientEmail: input.recipient.email,
-      carrierProduct: input.product,
-      parcelShopId: input.parcelShopId,
-      weight: input.parcels[0]?.weight,
+      recipientName: input.recipientName,
+      recipientStreet: input.recipientStreet,
+      recipientZip: input.recipientZip,
+      recipientCity: input.recipientCity,
+      recipientCountry: input.recipientCountry || "DK",
+      recipientPhone: input.recipientPhone,
+      recipientEmail: input.recipientEmail,
+      servicePointId: input.servicePointId,
+      weight: input.weight,
     },
   });
 
   try {
-    const result = await adapter.createShipment({
-      sender,
-      recipient: input.recipient,
-      parcels: input.parcels,
-      product: input.product,
-      parcelShopId: input.parcelShopId,
-      reference: shipment.id,
+    const result = await client.createShipment({
+      own_agreement: false,
+      product_code: input.productCode,
+      service_codes: input.serviceCodes,
+      parties: [
+        sender,
+        {
+          type: "receiver",
+          name: input.recipientName,
+          address1: input.recipientStreet,
+          postal_code: input.recipientZip,
+          city: input.recipientCity,
+          country_code: input.recipientCountry || "DK",
+          phone: input.recipientPhone,
+          email: input.recipientEmail,
+        },
+      ],
+      parcels: [{ weight: input.weight }],
+      reference: input.shopifyOrderName || shipment.id,
+      order_id: input.shopifyOrderId,
     });
 
-    // Update with carrier response
+    const trackingNumber = result.parcels?.[0]?.pkg_no || result.tracking_codes?.[0];
+    const trackingUrl = result.tracking_links?.[0];
+
     return await prisma.shipment.update({
       where: { id: shipment.id },
       data: {
         status: "LABEL_CREATED",
-        carrierRef: result.carrierRef,
-        trackingNumber: result.trackingNumber,
-        trackingUrl: result.trackingUrl,
-        labelData: new Uint8Array(result.labelPdf),
+        shipmondoId: result.id,
+        carrierCode: result.carrier_code,
+        trackingNumber,
+        trackingUrl,
+        labelBase64: result.label_base64,
       },
     });
   } catch (error) {
-    // Mark as failed
     await prisma.shipment.update({
       where: { id: shipment.id },
       data: {
@@ -97,39 +120,26 @@ export async function createShipment(
   }
 }
 
-export async function cancelShipment(
-  tenant: Tenant,
-  shipmentId: string,
-): Promise<Shipment> {
-  const shipment = await prisma.shipment.findFirstOrThrow({
-    where: { id: shipmentId, tenantId: tenant.id },
-  });
-
-  if (!shipment.carrierRef) {
-    throw new Error("Shipment has no carrier reference — cannot cancel");
-  }
-
-  const credentials = getTenantCarrierCredentials(tenant);
-  const adapter = await getCarrierAdapter(shipment.carrier, credentials);
-  await adapter.cancelShipment(shipment.carrierRef);
-
-  return prisma.shipment.update({
-    where: { id: shipment.id },
-    data: { status: "CANCELLED" },
-  });
-}
-
 export async function getShipmentLabel(
   tenant: Tenant,
   shipmentId: string,
-): Promise<Buffer> {
+  format: "a4_pdf" | "10x19_pdf" | "zpl" = "a4_pdf",
+): Promise<string> {
   const shipment = await prisma.shipment.findFirstOrThrow({
     where: { id: shipmentId, tenantId: tenant.id },
   });
 
-  if (!shipment.labelData) {
-    throw new Error("No label data available for this shipment");
+  // If we already have the label stored, return it
+  if (shipment.labelBase64) {
+    return shipment.labelBase64;
   }
 
-  return Buffer.from(shipment.labelData);
+  // Otherwise fetch from Shipmondo
+  if (!shipment.shipmondoId) {
+    throw new Error("No Shipmondo ID for this shipment");
+  }
+
+  const client = getShipmondoClient(tenant);
+  const labels = await client.getShipmentLabels(shipment.shipmondoId, format);
+  return labels.base64;
 }

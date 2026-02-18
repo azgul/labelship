@@ -7,7 +7,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  // Clean up tenant data
   const tenant = await prisma.tenant.findUnique({
     where: { shop },
   });
@@ -18,7 +17,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await prisma.tenant.delete({ where: { id: tenant.id } });
   }
 
-  // Clean up sessions
   if (session) {
     await prisma.session.deleteMany({ where: { shop } });
   }

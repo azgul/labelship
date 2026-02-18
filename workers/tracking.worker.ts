@@ -1,6 +1,7 @@
 import { Worker } from "bullmq";
 import IORedis from "ioredis";
 import { PrismaClient } from "@prisma/client";
+import { ShipmondoClient } from "../app/lib/shipmondo/client";
 
 const prisma = new PrismaClient();
 const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
@@ -17,8 +18,8 @@ const worker = new Worker(
       include: { tenant: true },
     });
 
-    if (!shipment || !shipment.trackingNumber) {
-      console.log(`Skipping tracking for shipment ${shipmentId}: no tracking number`);
+    if (!shipment || !shipment.shipmondoId) {
+      console.log(`Skipping tracking for shipment ${shipmentId}: no Shipmondo ID`);
       return;
     }
 
@@ -27,28 +28,33 @@ const worker = new Worker(
       return;
     }
 
-    const { getCarrierAdapter } = await import("../app/lib/carriers/registry");
+    if (!shipment.tenant.shipmondoApiUser || !shipment.tenant.shipmondoApiKey) {
+      console.log(`Skipping tracking for shipment ${shipmentId}: no API credentials`);
+      return;
+    }
 
-    const adapter = await getCarrierAdapter(shipment.carrier, {
-      customerId: shipment.tenant.glsCustomerId || undefined,
-      apiUsername: shipment.tenant.glsApiUsername || undefined,
-      apiPassword: shipment.tenant.glsApiPassword || undefined,
+    const client = new ShipmondoClient({
+      apiUser: shipment.tenant.shipmondoApiUser,
+      apiKey: shipment.tenant.shipmondoApiKey,
     });
 
-    const tracking = await adapter.getTracking(shipment.trackingNumber);
+    const shipmondoShipment = await client.getShipment(shipment.shipmondoId);
 
-    const newStatus = tracking.delivered
-      ? "DELIVERED"
-      : tracking.events.length > 0
-        ? "IN_TRANSIT"
-        : shipment.status;
+    // Shipmondo doesn't expose granular tracking status via their API,
+    // but we can check if tracking links/codes have been updated.
+    // For detailed tracking, the tracking URL points to the carrier's page.
+    const trackingNumber = shipmondoShipment.parcels?.[0]?.pkg_no
+      || shipmondoShipment.tracking_codes?.[0]
+      || shipment.trackingNumber;
 
-    if (newStatus !== shipment.status) {
+    const trackingUrl = shipmondoShipment.tracking_links?.[0] || shipment.trackingUrl;
+
+    if (trackingNumber !== shipment.trackingNumber || trackingUrl !== shipment.trackingUrl) {
       await prisma.shipment.update({
         where: { id: shipment.id },
-        data: { status: newStatus },
+        data: { trackingNumber, trackingUrl },
       });
-      console.log(`Updated shipment ${shipmentId} status: ${shipment.status} → ${newStatus}`);
+      console.log(`Updated tracking for shipment ${shipmentId}`);
     }
   },
   { connection: redis },

@@ -7,13 +7,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-enum CarrierCode {
-  GLS
-  POSTNORD
-  DAO
-  BRING
-}
-
 enum ShipmentStatus {
   PENDING
   LABEL_CREATED
@@ -47,7 +40,8 @@ model Tenant {
   billingActive     Boolean  @default(false)
   freeLabelsUsed    Int      @default(0)
   freeLabelsLimit   Int      @default(10)
-  defaultCarrier    CarrierCode @default(GLS)
+  shipmondoApiUser  String?
+  shipmondoApiKey   String?
   senderName        String?
   senderStreet      String?
   senderZip         String?
@@ -55,9 +49,6 @@ model Tenant {
   senderCountry     String   @default("DK")
   senderPhone       String?
   senderEmail       String?
-  glsCustomerId     String?
-  glsApiUsername     String?
-  glsApiPassword    String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -68,13 +59,13 @@ model Tenant {
 model Shipment {
   id                String          @id @default(cuid())
   tenantId          String
-  carrier           CarrierCode
-  carrierRef        String?
+  shipmondoId       Int?
+  productCode       String?
+  carrierCode       String?
   trackingNumber    String?
   trackingUrl       String?
   status            ShipmentStatus  @default(PENDING)
-  labelUrl          String?
-  labelData         Bytes?
+  labelBase64       String?
   shopifyOrderId    String?
   shopifyOrderName  String?
   recipientName     String
@@ -84,9 +75,8 @@ model Shipment {
   recipientCountry  String          @default("DK")
   recipientPhone    String?
   recipientEmail    String?
-  carrierProduct    String?
-  parcelShopId      String?
-  weight            Decimal?
+  servicePointId    String?
+  weight            Int?
   errorMessage      String?
   billed            Boolean         @default(false)
   createdAt         DateTime        @default(now())

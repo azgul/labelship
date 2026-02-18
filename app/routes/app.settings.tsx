@@ -37,9 +37,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     senderCountry: tenant.senderCountry,
     senderPhone: tenant.senderPhone || "",
     senderEmail: tenant.senderEmail || "",
-    glsCustomerId: tenant.glsCustomerId || "",
-    glsApiUsername: tenant.glsApiUsername || "",
-    hasGlsPassword: !!tenant.glsApiPassword,
+    shipmondoApiUser: tenant.shipmondoApiUser || "",
+    hasShipmondoApiKey: !!tenant.shipmondoApiKey,
   });
 };
 
@@ -55,13 +54,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     senderCountry: formData.get("senderCountry") as string,
     senderPhone: formData.get("senderPhone") as string,
     senderEmail: formData.get("senderEmail") as string,
-    glsCustomerId: formData.get("glsCustomerId") as string,
-    glsApiUsername: formData.get("glsApiUsername") as string,
+    shipmondoApiUser: formData.get("shipmondoApiUser") as string,
   };
 
-  const glsPassword = formData.get("glsApiPassword") as string;
-  if (glsPassword) {
-    data.glsApiPassword = glsPassword;
+  const apiKey = formData.get("shipmondoApiKey") as string;
+  if (apiKey) {
+    data.shipmondoApiKey = apiKey;
   }
 
   await prisma.tenant.update({
@@ -87,9 +85,8 @@ export default function Settings() {
     senderCountry: loaderData.senderCountry,
     senderPhone: loaderData.senderPhone,
     senderEmail: loaderData.senderEmail,
-    glsCustomerId: loaderData.glsCustomerId,
-    glsApiUsername: loaderData.glsApiUsername,
-    glsApiPassword: "",
+    shipmondoApiUser: loaderData.shipmondoApiUser,
+    shipmondoApiKey: "",
   });
 
   const handleChange = useCallback(
@@ -139,21 +136,20 @@ export default function Settings() {
           </Layout.AnnotatedSection>
 
           <Layout.AnnotatedSection
-            title="GLS credentials"
-            description="API credentials from your GLS business agreement."
+            title="Shipmondo API"
+            description="Get your API credentials from Shipmondo: Settings > API > Access. A free Shipmondo account is all you need."
           >
             <Card>
               <FormLayout>
-                <TextField label="Customer ID" name="glsCustomerId" autoComplete="off" value={form.glsCustomerId} onChange={handleChange("glsCustomerId")} />
-                <TextField label="API Username" name="glsApiUsername" autoComplete="off" value={form.glsApiUsername} onChange={handleChange("glsApiUsername")} />
+                <TextField label="API User" name="shipmondoApiUser" autoComplete="off" value={form.shipmondoApiUser} onChange={handleChange("shipmondoApiUser")} />
                 <TextField
-                  label="API Password"
-                  name="glsApiPassword"
+                  label="API Key"
+                  name="shipmondoApiKey"
                   type="password"
                   autoComplete="off"
-                  value={form.glsApiPassword}
-                  onChange={handleChange("glsApiPassword")}
-                  placeholder={loaderData.hasGlsPassword ? "Leave blank to keep current" : ""}
+                  value={form.shipmondoApiKey}
+                  onChange={handleChange("shipmondoApiKey")}
+                  placeholder={loaderData.hasShipmondoApiKey ? "Leave blank to keep current" : ""}
                 />
               </FormLayout>
             </Card>
