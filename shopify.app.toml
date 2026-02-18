@@ -1,0 +1,25 @@
+# Learn more about configuring your app:
+# https://shopify.dev/docs/apps/tools/cli/configuration
+
+name = "Labelship"
+client_id = ""
+application_url = ""
+
+[build]
+  command = "npm run build"
+
+[access_scopes]
+  scopes = "read_orders,read_products,read_fulfillments,write_fulfillments"
+
+[webhooks]
+  api_version = "2025-01"
+
+  [[webhooks.subscriptions]]
+    topics = ["app/uninstalled"]
+    uri = "/webhooks/app/uninstalled"
+
+[auth]
+  redirect_urls = []
+
+[pos]
+  embedded = false

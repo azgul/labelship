@@ -1,0 +1,46 @@
+app = "labelship"
+primary_region = "ams"
+kill_signal = "SIGINT"
+kill_timeout = "5s"
+
+[build]
+
+[deploy]
+  release_command = "npx prisma migrate deploy"
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+[processes]
+  web = "npm run docker-start"
+  worker = "node --import tsx workers/tracking.worker.ts"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3000
+  processes = ["web"]
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/"

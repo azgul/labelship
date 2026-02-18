@@ -1,0 +1,115 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum CarrierCode {
+  GLS
+  POSTNORD
+  DAO
+  BRING
+}
+
+enum ShipmentStatus {
+  PENDING
+  LABEL_CREATED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+  FAILED
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+model Tenant {
+  id                String   @id @default(cuid())
+  shop              String   @unique
+  billingActive     Boolean  @default(false)
+  freeLabelsUsed    Int      @default(0)
+  freeLabelsLimit   Int      @default(10)
+  defaultCarrier    CarrierCode @default(GLS)
+  senderName        String?
+  senderStreet      String?
+  senderZip         String?
+  senderCity        String?
+  senderCountry     String   @default("DK")
+  senderPhone       String?
+  senderEmail       String?
+  glsCustomerId     String?
+  glsApiUsername     String?
+  glsApiPassword    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  shipments      Shipment[]
+  billingRecords BillingRecord[]
+}
+
+model Shipment {
+  id                String          @id @default(cuid())
+  tenantId          String
+  carrier           CarrierCode
+  carrierRef        String?
+  trackingNumber    String?
+  trackingUrl       String?
+  status            ShipmentStatus  @default(PENDING)
+  labelUrl          String?
+  labelData         Bytes?
+  shopifyOrderId    String?
+  shopifyOrderName  String?
+  recipientName     String
+  recipientStreet   String
+  recipientZip      String
+  recipientCity     String
+  recipientCountry  String          @default("DK")
+  recipientPhone    String?
+  recipientEmail    String?
+  carrierProduct    String?
+  parcelShopId      String?
+  weight            Decimal?
+  errorMessage      String?
+  billed            Boolean         @default(false)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@index([trackingNumber])
+}
+
+model BillingRecord {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  shipmentId            String?
+  shopifyUsageRecordId  String?
+  amount                Decimal
+  currency              String   @default("DKK")
+  description           String
+  createdAt             DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+}
